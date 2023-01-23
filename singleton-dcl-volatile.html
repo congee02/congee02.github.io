@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset='UTF-8'><meta name='viewport' content='width=device-width initial-scale=1'>
+<title>以 JVM 切入单例模式双检锁</title>
+</head>
+<body><h2 id='以-懒汉单例模式-理解-双检锁-和-volatile-关键字'>以 懒汉单例模式 理解 双检锁 和 volatile 关键字 </h2>
+<h3 id='前言'>前言</h3>
+<pre><code>单例模式，也叫单子模式，是一种常用的软件设计模式，属于创建型模式的一种。在应用这个模式时，单例对象的类必须保证只有一个实例存在。许多时候整个系统只需要拥有一个的全局对象，这样有利于我们协调系统整体的行为。比如在某个服务器程序中，该服务器的配置信息存放在一个文件中，这些配置数据由一个单例对象统一读取，然后服务进程中的其他对象再通过这个单例对象获取这些配置信息。这种方式简化了在复杂环境下的配置管理。
+懒汉式为了支持延时加载，将对象的创建延迟到了获取对象的时候，但为了线程安全，不得不为获取对象的操作加锁，这就导致了低性能。
+</code></pre>
+<h3 id='线程不安全的懒汉单例模式'>线程不安全的懒汉单例模式</h3>
+<pre><code class='language-java' lang='java'>public class SingleGlobalTable {
+
+    private static GlobalTable INSTANCE;
+
+    private SingleGlobalTable() {
+    }
+
+    public static GlobalTable getInstance() {
+        if (INSTANCE == null) {
+            INSTANCE = new GlobalTable();
+        }
+        return INSTANCE;
+    }
+
+}
+</code></pre>
+<pre><code>JVM 在执行 new 时，执行以下操作
+	1. 在堆中分配内存
+	2. 对象必要信息 {对象头，实例数据，对齐填充}
+	3. 将引用指向该对象的堆内地址
+
+完成 1 后，对象的大小和地址已经确定。2 和 3 存在指令重排的可能性。
+3 的操作快于 2，如果 2 和 3 同时执行，那么完成的顺序为 1 - 3 - 2。
+
+SingleGlobalTable#getInstance() 第一次被 线程 T1 调用，发现 INSTANCE 为 null，执行 new 并返回。
+在 T1 返回 new 期间，若 3 完成 而 2 未完成，线程 T2 调用 SingleGlobalTable#getInstance()，此时 INSTANCE 指向堆内地址，不为 null，则会返回一个不完整的对象，可能会出现未知的结果。再者，上述，若两线程调用 SingleGlobalTable#getInstance() 时，都没有完成 3，则会重复执行 new。因此，由于指令重排,上述实现线程不安全。
+</code></pre>
+<p>&nbsp;</p>
+<h3 id='引入-dcl-的-懒汉单例模式'>引入 DCL 的 懒汉单例模式</h3>
+<pre><code class='language-java' lang='java'>public static SingleGlobalTable getInstance() {
+    if (INSTANCE == null) {
+        synchronized (SingleGlobalTable.class) {
+            if (INSTANCE == null) {	// 避免 new 的重复执行
+                INSTANCE = new SingleGlobalTable();
+            }
+        }
+    }
+    return INSTANCE;
+}
+</code></pre>
+<pre><code>引入 DCL 的 懒汉单例模式，只同时允许一个线程执行 new，避免了 new 的重复执行问题，但依旧不能解决指令重排带来的线程安全问题。
+</code></pre>
+<p>&nbsp;</p>
+<h3 id='用-volatile-修饰-instance'>用 volatile 修饰 INSTANCE</h3>
+<pre><code class='language-java' lang='java'>public class SingleGlobalTable {
+
+    private volatile static SingleGlobalTable INSTANCE;
+
+    private SingleGlobalTable() {
+    }
+
+    public static SingleGlobalTable getInstance() {
+        if (INSTANCE == null) {
+            synchronized (SingleGlobalTable.class) {
+                if (INSTANCE == null) {
+                    INSTANCE = new SingleGlobalTable();
+                }
+            }
+        }
+        return INSTANCE;
+    }
+
+}
+</code></pre>
+<pre><code>volatile 关键字 禁止 指令重排序 优化，在 volatile 修饰的变量赋值后有一个内存屏障，确保读操作不被重排序到内存屏障之前，解决了重排列带来的问题。
+</code></pre>
+<p>&nbsp;</p>
+</body>
+</html>
